@@ -120,7 +120,7 @@ class DebateState(TypedDict):
 将财务数据拆分为三个互不跨越的时间维度：
 
 ### `LTMTTMData`
-过去12个月已审计/已报告数据。字段包括: `trailing_pe`, `trailing_eps`, `price_to_book`, `price_to_sales`, `return_on_equity`, `return_on_assets`, `gross_margin`, `net_profit_margin`, `debt_to_equity`, `current_ratio`, `quick_ratio`, `free_cashflow_per_share`, `total_cash`, `total_debt`, `dividend_yield`, `payout_ratio`。所有字段为 `Optional[float]`。
+过去12个月已审计/已报告数据。字段包括: `trailing_pe`, `trailing_eps`, `price_to_book`, `price_to_sales`, `enterprise_to_ebitda`, `return_on_equity`, `return_on_assets`, `gross_margin`, `net_profit_margin`, `debt_to_equity`, `current_ratio`, `quick_ratio`, `free_cashflow_per_share`, `free_cashflow_total`, `total_cash`, `total_debt`, `dividend_yield`, `payout_ratio`。所有字段为 `Optional[float]`。
 
 ### `MRQData`
 最近一个季度同比数据（趋势拐点检测）。字段: `revenue_growth_yoy`, `earnings_growth_yoy`, `earnings_quarterly_growth`。
@@ -287,7 +287,7 @@ _session = requests_cache.CachedSession(
 
 ### `to_text()` 输出格式
 
-按四大维度 + 市场数据 + 股息分组展示，数值自动格式化（货币、百分比、大数缩写 T/B/M）。每个维度的数据标注了时间标签 `[LTM/TTM]`、`[MRQ]`、`[NTM/Forward]`，并在末尾附有时间维度纪律警告。
+按五大维度 + 市场数据 + 股息分组展示，数值自动格式化（货币、百分比、大数缩写 T/B/M）。关键字段增强防幻觉标注（PEG 标注"经系统计算，禁止自行修改"、分析师目标价标注"仅供参考，主观预测"）。每个维度的数据标注了时间标签 `[LTM/TTM]`、`[MRQ]`、`[NTM/Forward]`，并在末尾附有时间维度纪律警告。FCF 区分每股与推算总自由现金流，避免单位混淆。
 
 ---
 

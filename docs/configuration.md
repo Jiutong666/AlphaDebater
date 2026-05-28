@@ -80,7 +80,7 @@ LLM 采样温度，范围 0.0-2.0，默认 0.7。
 
 | 值 | 数据源 | 特点 |
 |----|--------|------|
-| `fmp` | Financial Modeling Prep | 默认。四大维度数据，免费版 250 req/day |
+| `fmp` | Financial Modeling Prep | 默认。五大维度数据，免费版 250 req/day |
 | `yfinance` | Yahoo Finance | 免费，但可能限流 |
 | `sample` | 离线样本 | 预置 TSLA/AAPL/NVDA 数据，零网络依赖 |
 
