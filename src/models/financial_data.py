@@ -37,6 +37,7 @@ class LTMTTMData(BaseModel):
     current_ratio: Optional[float] = None
     quick_ratio: Optional[float] = None
     free_cashflow_per_share: Optional[float] = None
+    free_cashflow_total: Optional[float] = None
     total_cash: Optional[float] = None
     total_debt: Optional[float] = None
     dividend_yield: Optional[float] = None
@@ -116,7 +117,8 @@ class TemporalFinancialData(BaseModel):
             debt_to_equity=_float_or_none(info.get("debtToEquity")),
             current_ratio=_float_or_none(info.get("currentRatio")),
             quick_ratio=_float_or_none(info.get("quickRatio")),
-            free_cashflow_per_share=_float_or_none(info.get("freeCashflow")),
+            free_cashflow_per_share=_float_or_none(info.get("freeCashflowPerShare") or info.get("freeCashflow")),
+            free_cashflow_total=_float_or_none(info.get("freeCashflowTotal") or info.get("freeCashflow")),
             total_cash=_float_or_none(info.get("totalCash")),
             total_debt=_float_or_none(info.get("totalDebt")),
             dividend_yield=_float_or_none(info.get("dividendYield")),

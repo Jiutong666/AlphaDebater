@@ -392,7 +392,8 @@ def _build_info(
         "debtToEquity": r.get("debtToEquityRatioTTM"),
         "currentRatio": r.get("currentRatioTTM"),
         "quickRatio": r.get("quickRatioTTM"),
-        "freeCashflow": r.get("freeCashFlowPerShareTTM"),       # 每股自由现金流
+        "freeCashflowPerShare": r.get("freeCashFlowPerShareTTM"),  # 每股自由现金流
+        "freeCashflowTotal": None,  # 下方根据每股FCF和市值推算
         "totalCash": bs.get("cashAndCashEquivalents"),
         "totalDebt": bs.get("totalDebt"),
 
@@ -420,6 +421,17 @@ def _build_info(
             if float(fwd_eps) > 0:
                 info["forwardPE"] = round(float(current_price) / float(fwd_eps), 2)
         except (ValueError, TypeError):
+            pass
+
+    # ── 推算总自由现金流: 每股FCF × (市值/当前价) ──
+    fcf_per_share = info.get("freeCashflowPerShare")
+    mkt_cap = info.get("marketCap")
+    if fcf_per_share and mkt_cap and current_price:
+        try:
+            if float(current_price) > 0:
+                shares = float(mkt_cap) / float(current_price)
+                info["freeCashflowTotal"] = round(float(fcf_per_share) * shares, 0)
+        except (ValueError, TypeError, ZeroDivisionError):
             pass
 
     return info
@@ -578,12 +590,17 @@ class FMPSource(DataSource):
         lines.append(f"  市净率:                 {_fmt('priceToBook')}")
         lines.append(f"  市销率 (TTM):           {_fmt('priceToSalesTrailing12Months')}")
         lines.append(f"  企业价值/EBITDA:        {_fmt('enterpriseToEbitda')}")
-        lines.append("  [NTM/Forward — 未来12个月预测数据]")
-        lines.append(f"  远期市盈率 (Forward):   {_fmt('forwardPE')}")
-        lines.append(f"  PEG 比率:               {_fmt('pegRatio')}")
-        lines.append(f"  分析师目标均价:         ${_fmt('targetMeanPrice')}")
-        lines.append(f"  分析师目标上限:         ${_fmt('targetHighPrice')}")
-        lines.append(f"  分析师目标下限:         ${_fmt('targetLowPrice')}")
+        lines.append("  [NTM/Forward — 未来12个月预测数据 (仅此维度可用于推导目标价)]")
+        lines.append(f"  远期市盈率 (Forward PE):{_fmt('forwardPE')}")
+        # PEG: 优先展示系统预计算值，标注防篡改
+        peg_display = _fmt('pegRatio')
+        if info.get('pegRatio') is not None:
+            lines.append(f"  PEG 比率 (经系统计算，禁止自行修改): {peg_display}")
+        else:
+            lines.append(f"  PEG 比率:               {peg_display}")
+        lines.append(f"  华尔街一致预期目标价 (仅供参考，主观预测): ${_fmt('targetMeanPrice')}")
+        lines.append(f"  华尔街目标价上限 (仅供参考): ${_fmt('targetHighPrice')}")
+        lines.append(f"  华尔街目标价下限 (仅供参考): ${_fmt('targetLowPrice')}")
 
         # ── 维度 2: 预期差 (Forward 指引) ──
         lines.append("\n[维度二: 预期差 — NTM/Forward 分析师预测]")
@@ -640,18 +657,6 @@ class FMPSource(DataSource):
                 signal = "[净买入 - 看多信号]" if buy_ratio > 0.5 else "[净卖出 - 看空信号]"
                 lines.append(f"  买入占比:               {ratio_pct:.1f}%  {signal}")
 
-            recent = info.get("insiderRecentTransactions", [])
-            if recent:
-                lines.append(f"\n  最近 {min(len(recent), 5)} 笔内部人士交易:")
-                for txn in recent[:5]:
-                    lines.append(
-                        f"    {txn.get('date', 'N/A')} | "
-                        f"{txn.get('officer', 'N/A')} | "
-                        f"{txn.get('type', 'N/A')} | "
-                        f"{txn.get('shares', 0):,} 股 "
-                        f"@ ${txn.get('price', 'N/A')}"
-                    )
-
         # ── 维度 4: 财务健康 ──
         lines.append("\n[维度四: 财务健康]")
         lines.append("  [LTM/TTM — 过去12个月已审计/已报告数据]")
@@ -663,7 +668,10 @@ class FMPSource(DataSource):
         lines.append(f"  负债权益比:             {_fmt('debtToEquity')}")
         lines.append(f"  流动比率:               {_fmt('currentRatio')}")
         lines.append(f"  速动比率:               {_fmt('quickRatio')}")
-        lines.append(f"  每股自由现金流:         ${_fmt('freeCashflow')}")
+        lines.append(f"  每股自由现金流 (FCF/Share): ${_fmt('freeCashflowPerShare')}")
+        total_fcf = info.get('freeCashflowTotal')
+        total_display = _money(total_fcf, compact=True) if total_fcf else "N/A"
+        lines.append(f"  推算总自由现金流 (Total FCF): {total_display}")
         lines.append(f"  总现金:                 {_money(info.get('totalCash'))}")
         lines.append(f"  总债务:                 {_money(info.get('totalDebt'))}")
         lines.append("  [MRQ — 最近季度同比数据 (趋势检测)]")
@@ -672,13 +680,10 @@ class FMPSource(DataSource):
         lines.append(f"  EPS 增速 (YoY):         {_fmt('earningsQuarterlyGrowth', '.2%')}")
 
         # ── 市场数据 ──
-        lines.append("\n[市场数据]")
+        lines.append("\n[市场数据 — 仅供背景参考，不可作为估值论据]")
         lines.append(f"  52周最高:               ${_fmt('fiftyTwoWeekHigh')}")
         lines.append(f"  52周最低:               ${_fmt('fiftyTwoWeekLow')}")
-        lines.append(f"  50日均价:               ${_fmt('fiftyDayAverage')}")
-        lines.append(f"  200日均价:              ${_fmt('twoHundredDayAverage')}")
         lines.append(f"  Beta (5Y):              {_fmt('beta')}")
-        lines.append(f"  平均成交量:             {_fmt('averageVolume', '.0f')}")
 
         # ── 股息 ──
         lines.append("\n[股息与回购]")

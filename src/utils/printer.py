@@ -71,16 +71,21 @@ def print_data_summary(ticker: str, info: dict[str, Any]) -> None:
         ("revenueGrowth",         "营收增长率"),
         ("earningsGrowth",        "盈利增长率"),
         ("debtToEquity",          "负债权益比"),
-        ("freeCashflow",          "自由现金流"),
+        ("freeCashflowPerShare",  "每股自由现金流 (FCF/Share)"),
         ("fiftyTwoWeekHigh",      "52周最高"),
         ("fiftyTwoWeekLow",       "52周最低"),
         ("beta",                  "Beta"),
     ]
 
     for field, label in key_fields:
-        value = info.get(field, "N/A")
+        value = info.get(field)
+        # 兼容旧版 yfinance/sample 数据源的 freeCashflow 键名
+        if value is None and field == "freeCashflowPerShare":
+            value = info.get("freeCashflow")
         if value is not None:
             print(f"     • {label}: {value}")
+        else:
+            print(f"     • {label}: N/A")
 
     print()
 
