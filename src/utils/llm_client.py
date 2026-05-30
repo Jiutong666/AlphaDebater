@@ -21,22 +21,26 @@ class LLMClient:
 
     封装了 API 密钥管理、超时重试、异常处理等生产级关注点。
 
-    Attributes:
-        client: OpenAI 客户端实例。
-        model: 使用的模型名称。
-        temperature: 采样温度。
-        max_tokens: 最大输出 Token 数。
+    Constructor parameters override settings; useful for testing.
     """
 
-    def __init__(self) -> None:
-        """初始化 LLM 客户端，从全局配置读取参数。"""
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Initialize LLM client. Falls back to global settings for any `None` arg."""
         self.client = OpenAI(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
+            api_key=api_key if api_key is not None else settings.llm_api_key,
+            base_url=base_url if base_url is not None else settings.llm_base_url,
         )
-        self.model: str = settings.llm_model
-        self.temperature: float = settings.temperature
-        self.max_tokens: int = settings.max_tokens
+        self.model = model if model is not None else settings.llm_model
+        self.temperature = temperature if temperature is not None else settings.temperature
+        self.max_tokens = max_tokens if max_tokens is not None else settings.max_tokens
 
     def chat(
         self,
@@ -225,7 +229,20 @@ class LLMClient:
                 messages.append({"role": "user", "content": stop_msg})
                 continue
 
-            # 没有 tool_calls — 返回纯文本
+            # 没有 tool_calls — 可能是绕过工具的纯文本
+            # 第一轮：强制要求先调用计算工具，防止在文本中编造数字
+            if turn == 0:
+                assistant_msg = {"role": "assistant", "content": message.content or ""}
+                messages.append(assistant_msg)
+                force_tool_msg = (
+                    "请**先调用必要的计算工具**（如 calculate_target_price、"
+                    "calculate_upside_downside 等），获取精确计算结果后，"
+                    "再输出完整的辩论正文。禁止在未调用工具的情况下直接在文本中推算数字。"
+                )
+                messages.append({"role": "user", "content": force_tool_msg})
+                continue
+
+            # 后续轮次 — 允许纯文本返回
             content: str = message.content or ""
             if prefill and content and not content.startswith(prefill[:30]):
                 content = prefill + content

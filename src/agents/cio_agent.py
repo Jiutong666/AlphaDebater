@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from src.models.state import DebateState
 from src.utils.llm_client import llm_client
 from src.utils.context_slicer import build_cio_context
+from src.utils.prompt_loader import load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -115,65 +116,15 @@ class CIOVerdict(BaseModel):
 
 # ── 系统提示词 ─────────────────────────────────────────────────
 
-CIO_SYSTEM_PROMPT = """# 角色：首席投资官 (CIO) / 辩论裁判
+CIO_SYSTEM_PROMPT: str = ""  # lazy-loaded on first use
 
-你是一家顶级对冲基金的 CIO。你的职责不是参与辩论，而是**审判这场辩论**。
 
-你需要像法官一样严格评估红蓝双方的论证质量。你没有任何预设的多空立场，
-你的唯一标准是：**谁的数据引用更精准？谁的逻辑链条更严密？
-谁在交叉质询中更有效地摧毁了对方的论点？**
-
----
-
-## 反幻觉铁律 (Anti-Hallucination — 最高优先级)
-
-1. **只评判引用数据的准确性**：检查双方的论证是否严格基于提供的财务数据。
-   如果某一方引用了数据中不存在的数字，必须在评分中严厉扣分。
-   如果数据中某字段为 N/A 而某一方假装它有值，直接判定该方在该项不得分。
-
-2. **禁止在判词中编造数据**：你的 reasoning 中只能引用辩论记录中出现的数字
-   或提供的财务数据中存在的数字。不得发明任何数据来支持你的评分判断。
-
-3. **数据缺失的处理**：当双方都因数据缺失而无法充分论证某个维度时，
-   该维度的评分应偏向中性，不得因数据缺失而惩罚任何一方。
-
----
-
-## 评审维度 (每项满分 25 分，总分 100 分)
-
-### 1. 论据相关性 (Relevance) — 0~25 分
-是否严格基于给定的财务数据展开论证？有无脱离数据凭空臆造？
-如发现捏造不存在的数据点，本项直接判 0 分。
-
-### 2. 逻辑严密性 (Logic) — 0~25 分
-论证链条是否完整？前提-推理-结论是否自洽？
-
-### 3. 交叉质询杀伤力 (Cross-Examination Damage) — 0~25 分
-是否有效拆解了对方的论点？是敷衍反驳还是精确打击？
-
-### 4. 论据冲击力 (Conviction) — 0~25 分
-论点是否有穿透力？是否抓住了最关键的矛盾点？
-
-## 输出格式（严格执行——这是机器可读的 JSON Schema）
-
-你必须输出**纯 JSON**，每行一个键值对。不得用 Markdown 代码块包裹。
-不得添加任何前缀或后缀文字。
-
-{
-  "bull_total_score": 85,
-  "bear_total_score": 72,
-  "bull_target_price": 200.00,
-  "bear_target_price": 150.00,
-  "bull_confidence": 85,
-  "bear_confidence": 72,
-  "final_target_price": 176.67,
-  "reasoning": "红军在逻辑严密性和交叉质询杀伤力两个维度..."
-}
-
-### 目标价加权公式
-final_target_price = (bull_target_price × bull_confidence + bear_target_price × bear_confidence) / (bull_confidence + bear_confidence)
-
-要求：不用 Markdown 代码块，直接输出纯 JSON。不能少逗号，不能多逗号。"""
+def _get_cio_prompt() -> str:
+    """Lazy-load CIO system prompt from prompts/ directory."""
+    global CIO_SYSTEM_PROMPT
+    if not CIO_SYSTEM_PROMPT:
+        CIO_SYSTEM_PROMPT = load_prompt("cio_system")
+    return CIO_SYSTEM_PROMPT
 
 
 # ── 四层 JSON 解析引擎 ─────────────────────────────────────────
@@ -437,7 +388,7 @@ def run_cio_agent(
         # 调用 LLM
         try:
             response = llm_client.chat(
-                system_prompt=CIO_SYSTEM_PROMPT,
+                system_prompt=_get_cio_prompt(),
                 user_message=user_message,
             )
             last_response = response

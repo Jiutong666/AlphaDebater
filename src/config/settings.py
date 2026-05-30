@@ -39,10 +39,10 @@ class Settings(BaseSettings):
         description="最大辩论轮数 (1-5)",
     )
     temperature: float = Field(
-        default=0.7,
+        default=0.1,
         ge=0.0,
         le=2.0,
-        description="LLM 采样温度",
+        description="LLM 采样温度 (低温度提升指令遵循度和数值准确性)",
     )
     max_tokens: int = Field(
         default=8192,
@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     fmp_api_key: str = Field(
         default="",
         description="Financial Modeling Prep API Key (从 .env 或环境变量加载)",
+    )
+    enable_news: bool = Field(
+        default=False,
+        description="是否启用新闻情绪数据 (维度五)。需要 FMP API Key。",
     )
 
     model_config = {

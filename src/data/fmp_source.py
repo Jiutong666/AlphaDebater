@@ -32,6 +32,7 @@ import requests_cache
 
 from src.config.settings import settings
 from src.data.base import DataSource
+from src.utils.financial_formatter import fmt_val, fmt_money, build_header, build_footer
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +424,19 @@ def _build_info(
         except (ValueError, TypeError):
             pass
 
+    # ── PEG 兜底计算: forwardPE / (earningsGrowth% × 100) ──
+    # 确保 PEG 永不为 N/A，杜绝 Agent 心算 PEG
+    if info.get("pegRatio") is None:
+        fwd_pe = info.get("forwardPE")
+        earnings_growth = info.get("earningsGrowth")
+        if fwd_pe and earnings_growth:
+            try:
+                growth_pct = float(earnings_growth) * 100  # decimal → %
+                if growth_pct > 0:
+                    info["pegRatio"] = round(float(fwd_pe) / growth_pct, 2)
+            except (ValueError, TypeError):
+                pass
+
     # ── 推算总自由现金流: 每股FCF × (市值/当前价) ──
     fcf_per_share = info.get("freeCashflowPerShare")
     mkt_cap = info.get("marketCap")
@@ -528,7 +542,14 @@ class FMPSource(DataSource):
             key, profile, ratios, key_metrics, growth,
             analyst_est, insider_summary, balance_sheet, price_target,
         )
-        return {"info": info}
+
+        # ── 维度五: 新闻情绪 (可选) ──
+        news_data: dict[str, Any] = {}
+        if settings.enable_news:
+            from src.data.news_source import fetch_news as _fetch_news
+            news_data = _fetch_news(key) or {}
+
+        return {"info": info, "news": news_data}
 
     def to_text(self, data: dict[str, Any]) -> str:
         """将 FMP 四大维度数据序列化为 LLM 可读文本。
@@ -543,64 +564,28 @@ class FMPSource(DataSource):
             格式化后的 Markdown 兼容文本。
         """
         info: dict[str, Any] = data.get("info", {})
-
-        def _fmt(key: str, fmt_spec: str = ".2f") -> str:
-            val = info.get(key)
-            if val is None:
-                return "N/A"
-            if isinstance(val, (int, float)):
-                return f"{val:{fmt_spec}}"
-            return str(val)
-
-        def _money(val: object, compact: bool = False) -> str:
-            """将大数值转为可读格式 (T/B/M)。"""
-            if val is None:
-                return "N/A"
-            try:
-                v = float(val)  # type: ignore[arg-type]
-            except (ValueError, TypeError):
-                return str(val)
-            if compact:
-                if abs(v) >= 1e12:
-                    return f"${v / 1e12:.2f}T"
-                if abs(v) >= 1e9:
-                    return f"${v / 1e9:.2f}B"
-                if abs(v) >= 1e6:
-                    return f"${v / 1e6:.2f}M"
-            return f"${v:,.0f}"
-
-        lines: list[str] = []
-        lines.append("=" * 60)
-        lines.append(
-            f"股票名称: {info.get('shortName', 'N/A')} "
-            f"({info.get('symbol', 'N/A')})"
-        )
-        lines.append(
-            f"行业: {info.get('industry', 'N/A')} "
-            f"| 板块: {info.get('sector', 'N/A')}"
-        )
-        lines.append("=" * 60)
+        lines: list[str] = list(build_header(info))
 
         # ── 维度 1: 基础与估值 ──
         lines.append("\n[维度一: 基础与估值]")
         lines.append("  [LTM/TTM — 过去12个月已审计/已报告数据]")
-        lines.append(f"  当前价格:              ${_fmt('currentPrice')}")
-        lines.append(f"  市值:                   {_money(info.get('marketCap'), compact=True)}")
-        lines.append(f"  市盈率 (TTM):           {_fmt('trailingPE')}")
-        lines.append(f"  市净率:                 {_fmt('priceToBook')}")
-        lines.append(f"  市销率 (TTM):           {_fmt('priceToSalesTrailing12Months')}")
-        lines.append(f"  企业价值/EBITDA:        {_fmt('enterpriseToEbitda')}")
+        lines.append(f"  当前价格:              ${fmt_val(info,'currentPrice')}")
+        lines.append(f"  市值:                   {fmt_money(info.get('marketCap'), compact=True)}")
+        lines.append(f"  市盈率 (TTM):           {fmt_val(info,'trailingPE')}")
+        lines.append(f"  市净率:                 {fmt_val(info,'priceToBook')}")
+        lines.append(f"  市销率 (TTM):           {fmt_val(info,'priceToSalesTrailing12Months')}")
+        lines.append(f"  企业价值/EBITDA:        {fmt_val(info,'enterpriseToEbitda')}")
         lines.append("  [NTM/Forward — 未来12个月预测数据 (仅此维度可用于推导目标价)]")
-        lines.append(f"  远期市盈率 (Forward PE):{_fmt('forwardPE')}")
+        lines.append(f"  远期市盈率 (Forward PE):{fmt_val(info,'forwardPE')}")
         # PEG: 优先展示系统预计算值，标注防篡改
-        peg_display = _fmt('pegRatio')
+        peg_display = fmt_val(info,'pegRatio')
         if info.get('pegRatio') is not None:
             lines.append(f"  PEG 比率 (经系统计算，禁止自行修改): {peg_display}")
         else:
             lines.append(f"  PEG 比率:               {peg_display}")
-        lines.append(f"  华尔街一致预期目标价 (仅供参考，主观预测): ${_fmt('targetMeanPrice')}")
-        lines.append(f"  华尔街目标价上限 (仅供参考): ${_fmt('targetHighPrice')}")
-        lines.append(f"  华尔街目标价下限 (仅供参考): ${_fmt('targetLowPrice')}")
+        lines.append(f"  华尔街一致预期目标价 (仅供参考，主观预测): ${fmt_val(info,'targetMeanPrice')}")
+        lines.append(f"  华尔街目标价上限 (仅供参考): ${fmt_val(info,'targetHighPrice')}")
+        lines.append(f"  华尔街目标价下限 (仅供参考): ${fmt_val(info,'targetLowPrice')}")
 
         # ── 维度 2: 预期差 (Forward 指引) ──
         lines.append("\n[维度二: 预期差 — NTM/Forward 分析师预测]")
@@ -609,20 +594,20 @@ class FMPSource(DataSource):
         est_y_analysts = info.get("estEpsNextY_analysts")
         est_y_label = f"下一财年 ({est_y_date})"
         lines.append(f"  {est_y_label}:")
-        lines.append(f"    EPS 预估 (均值):      ${_fmt('estEpsNextY_avg')}  "
+        lines.append(f"    EPS 预估 (均值):      ${fmt_val(info,'estEpsNextY_avg')}  "
                      f"({est_y_analysts or 'N/A'} 位分析师)")
-        lines.append(f"    EPS 预估 (高值):      ${_fmt('estEpsNextY_high')}")
-        lines.append(f"    EPS 预估 (低值):      ${_fmt('estEpsNextY_low')}")
-        lines.append(f"    营收预估 (均值):       {_money(info.get('estRevenueNextY_avg'), compact=True)}")
+        lines.append(f"    EPS 预估 (高值):      ${fmt_val(info,'estEpsNextY_high')}")
+        lines.append(f"    EPS 预估 (低值):      ${fmt_val(info,'estEpsNextY_low')}")
+        lines.append(f"    营收预估 (均值):       {fmt_money(info.get('estRevenueNextY_avg'), compact=True)}")
 
         # 如果下一季度与下一财年不同，单独展示
         if info.get("estEpsNextQ_date") != info.get("estEpsNextY_date"):
             est_q_date = info.get("estEpsNextQ_date", "N/A")
             est_q_analysts = info.get("estEpsNextQ_analysts")
             lines.append(f"  下一季度 ({est_q_date}):")
-            lines.append(f"    EPS 预估 (均值):      ${_fmt('estEpsNextQ_avg')}  "
+            lines.append(f"    EPS 预估 (均值):      ${fmt_val(info,'estEpsNextQ_avg')}  "
                          f"({est_q_analysts or 'N/A'} 位分析师)")
-            lines.append(f"    EPS 预估 (高值):      ${_fmt('estEpsNextQ_high')}")
+            lines.append(f"    EPS 预估 (高值):      ${fmt_val(info,'estEpsNextQ_high')}")
 
         # EPS 预期差分析: TTM EPS vs Forward EPS
         ttm_eps = info.get("trailingEps")
@@ -633,7 +618,7 @@ class FMPSource(DataSource):
                 direction = "增长" if diff_pct >= 0 else "下滑"
                 lines.append(
                     f"  → Forward EPS vs TTM EPS: {direction} {abs(diff_pct):.1f}% "
-                    f"(${_fmt('trailingEps')} → ${_fmt('estEpsNextY_avg')})"
+                    f"(${fmt_val(info,'trailingEps')} → ${fmt_val(info,'estEpsNextY_avg')})"
                 )
             except (ValueError, TypeError, ZeroDivisionError):
                 pass
@@ -660,45 +645,42 @@ class FMPSource(DataSource):
         # ── 维度 4: 财务健康 ──
         lines.append("\n[维度四: 财务健康]")
         lines.append("  [LTM/TTM — 过去12个月已审计/已报告数据]")
-        lines.append(f"  毛利率:                 {_fmt('grossMargins', '.2%')}")
-        lines.append(f"  净利率:                 {_fmt('netProfitMargin', '.2%')}")
-        lines.append(f"  ROE (净资产收益率):      {_fmt('returnOnEquity', '.2%')}")
-        lines.append(f"  ROA (总资产收益率):      {_fmt('returnOnAssets', '.2%')}")
-        lines.append(f"  每股收益 (TTM):         ${_fmt('trailingEps')}")
-        lines.append(f"  负债权益比:             {_fmt('debtToEquity')}")
-        lines.append(f"  流动比率:               {_fmt('currentRatio')}")
-        lines.append(f"  速动比率:               {_fmt('quickRatio')}")
-        lines.append(f"  每股自由现金流 (FCF/Share): ${_fmt('freeCashflowPerShare')}")
+        lines.append(f"  毛利率:                 {fmt_val(info,'grossMargins', '.2%')}")
+        lines.append(f"  净利率:                 {fmt_val(info,'netProfitMargin', '.2%')}")
+        lines.append(f"  ROE (净资产收益率):      {fmt_val(info,'returnOnEquity', '.2%')}")
+        lines.append(f"  ROA (总资产收益率):      {fmt_val(info,'returnOnAssets', '.2%')}")
+        lines.append(f"  每股收益 (TTM):         ${fmt_val(info,'trailingEps')}")
+        lines.append(f"  负债权益比:             {fmt_val(info,'debtToEquity')}")
+        lines.append(f"  流动比率:               {fmt_val(info,'currentRatio')}")
+        lines.append(f"  速动比率:               {fmt_val(info,'quickRatio')}")
+        lines.append(f"  每股自由现金流 (FCF/Share): ${fmt_val(info,'freeCashflowPerShare')}")
         total_fcf = info.get('freeCashflowTotal')
-        total_display = _money(total_fcf, compact=True) if total_fcf else "N/A"
+        total_display = fmt_money(total_fcf, compact=True) if total_fcf else "N/A"
         lines.append(f"  推算总自由现金流 (Total FCF): {total_display}")
-        lines.append(f"  总现金:                 {_money(info.get('totalCash'))}")
-        lines.append(f"  总债务:                 {_money(info.get('totalDebt'))}")
+        lines.append(f"  总现金:                 {fmt_money(info.get('totalCash'))}")
+        lines.append(f"  总债务:                 {fmt_money(info.get('totalDebt'))}")
         lines.append("  [MRQ — 最近季度同比数据 (趋势检测)]")
-        lines.append(f"  营收增长率 (YoY):       {_fmt('revenueGrowth', '.2%')}")
-        lines.append(f"  盈利增长率 (YoY):       {_fmt('earningsGrowth', '.2%')}")
-        lines.append(f"  EPS 增速 (YoY):         {_fmt('earningsQuarterlyGrowth', '.2%')}")
+        lines.append(f"  营收增长率 (YoY):       {fmt_val(info,'revenueGrowth', '.2%')}")
+        lines.append(f"  盈利增长率 (YoY):       {fmt_val(info,'earningsGrowth', '.2%')}")
+        lines.append(f"  EPS 增速 (YoY):         {fmt_val(info,'earningsQuarterlyGrowth', '.2%')}")
 
         # ── 市场数据 ──
         lines.append("\n[市场数据 — 仅供背景参考，不可作为估值论据]")
-        lines.append(f"  52周最高:               ${_fmt('fiftyTwoWeekHigh')}")
-        lines.append(f"  52周最低:               ${_fmt('fiftyTwoWeekLow')}")
-        lines.append(f"  Beta (5Y):              {_fmt('beta')}")
+        lines.append(f"  52周最高:               ${fmt_val(info,'fiftyTwoWeekHigh')}")
+        lines.append(f"  52周最低:               ${fmt_val(info,'fiftyTwoWeekLow')}")
+        lines.append(f"  Beta (5Y):              {fmt_val(info,'beta')}")
 
         # ── 股息 ──
         lines.append("\n[股息与回购]")
-        lines.append(f"  股息率:                 {_fmt('dividendYield', '.2%')}")
-        lines.append(f"  派息比率:               {_fmt('payoutRatio', '.2%')}")
+        lines.append(f"  股息率:                 {fmt_val(info,'dividendYield', '.2%')}")
+        lines.append(f"  派息比率:               {fmt_val(info,'payoutRatio', '.2%')}")
 
-        lines.append("\n" + "=" * 60)
-        lines.append("数据来源: Financial Modeling Prep (FMP) Stable API — 机构级数据")
-        lines.append("以上四大维度为本次辩论的全部依据数据。红蓝双方必须严格基于上述数据展开论证。")
-        lines.append("")
-        lines.append("⚠️ 时间维度纪律 (Temporal Discipline):")
-        lines.append("  - [LTM/TTM] = 过去12个月已审计数据 → 用于历史估值、盈利能力、财务健康")
-        lines.append("  - [MRQ]     = 最近季度同比 → 用于趋势检测、转折点识别")
-        lines.append("  - [NTM/Forward] = 未来12个月预测 → 仅此维度可用于推导目标价")
-        lines.append("  - 禁止跨维度混合计算 (如用 LTM 增长率论证 NTM 估值倍数)")
-        lines.append("=" * 60)
+        # ── 维度五: 新闻情绪 (可选) ──
+        news_data: dict[str, Any] = data.get("news", {})
+        if news_data:
+            from src.data.news_source import format_news_section
+            lines.extend(format_news_section(news_data))
+
+        lines.extend(build_footer("Financial Modeling Prep (FMP) Stable API — 机构级数据"))
 
         return "\n".join(lines)

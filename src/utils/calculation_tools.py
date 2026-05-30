@@ -68,17 +68,12 @@ def calculate_peg_ratio(
     pe_ratio: float,
     earnings_growth_pct: float,
 ) -> dict[str, Any]:
-    """PEG 比率 = 市盈率 / 盈利增长率(%)。
+    """DEPRECATED — 系统已预计算 PEG，此函数不再暴露为工具。
 
-    PEG < 1 通常被视为低估，PEG > 2 通常被视为高估。
-    注意：earnings_growth_pct 是百分比数值 (如 25 表示 25%)，不是小数。
+    PEG = Forward PE / 盈利增长率(%)，公式已锁死在数据层。
+    Agent 必须直接引用数据中预计算的 PEG 值，禁止自行计算。
 
-    Args:
-        pe_ratio:           市盈率 (TTM 或 Forward PE)。
-        earnings_growth_pct: 盈利增长率百分比 (如 25 表示 25%)。
-
-    Returns:
-        {"peg_ratio": float, "pe_used": float, "growth_rate_used": float, "formula": str}
+    保留此函数仅为测试兼容性。
     """
     if earnings_growth_pct == 0:
         return {
@@ -170,7 +165,6 @@ def calculate_price_from_ps(
 TOOL_REGISTRY: dict[str, Callable[..., dict[str, Any]]] = {
     "calculate_target_price": calculate_target_price,
     "calculate_upside_downside": calculate_upside_downside,
-    "calculate_peg_ratio": calculate_peg_ratio,
     "calculate_growth_rate": calculate_growth_rate,
     "calculate_price_from_ps": calculate_price_from_ps,
 }
@@ -225,31 +219,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["current_price", "target_price"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate_peg_ratio",
-            "description": (
-                "计算 PEG 比率 = 市盈率 / 盈利增长率(%)。"
-                "PEG < 1 可能低估，PEG > 2 可能高估。"
-                "当你需要引用 PEG 时，必须调用此工具，禁止心算。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pe_ratio": {
-                        "type": "number",
-                        "description": "市盈率 (TTM PE 或 Forward PE)，从财务数据中获取。",
-                    },
-                    "earnings_growth_pct": {
-                        "type": "number",
-                        "description": "盈利增长率百分比数值 (如 25 表示 25%，不是 0.25)。从财务数据中获取。",
-                    },
-                },
-                "required": ["pe_ratio", "earnings_growth_pct"],
             },
         },
     },

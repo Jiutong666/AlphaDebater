@@ -245,33 +245,37 @@ class TestConcessionDetection:
     """验证妥协语言检测规则库。"""
 
     def test_detect_chinese_concession(self) -> None:
-        hits = detect_concession("对方说的确实有道理，但我觉得还是可以买。")
+        # "同意对方结论" 仍应被检测为过度让步
+        hits = detect_concession("我同意对方的结论，但我的观点略有不同。")
         assert len(hits) > 0
 
     def test_detect_english_concession(self) -> None:
-        hits = detect_concession("The bear has a point about the valuation.")
+        # "both sides have merit" 仍应被检测
+        hits = detect_concession("I think both sides have merit here.")
         assert len(hits) > 0
 
     def test_no_false_positive_on_aggressive(self) -> None:
         hits = detect_concession(
-            "对方的分析完全是垃圾。数据被恶意曲解，逻辑漏洞百出。"
+            "对方的分析存在缺陷。数据引用有选择性，推理链不完整。"
         )
         assert len(hits) == 0
 
     def test_no_false_positive_on_data_citation(self) -> None:
         hits = detect_concession(
-            "对方声称PE为35倍，但这一数据忽略了一次性减值的影响。"
+            "对方引用的PE数据确实正确，但对其权重的分配有严重问题。"
         )
+        # "数据正确" 本身不再是让步信号 (新规则允许承认数据但攻击解读)
         assert len(hits) == 0
 
     def test_both_sides_pattern(self) -> None:
-        hits = detect_concession("双方的观点都有一定道理，应该综合来看。")
+        # "双方都有道理" 仍应被检测
+        hits = detect_concession("双方都有道理，应该综合来看。")
         assert len(hits) > 0
 
     def test_prefill_bull_round2(self) -> None:
         prefill = get_prefill("bull", 2)
         assert "交叉质询" in prefill
-        assert "毁灭性反驳" in prefill
+        assert "回应" in prefill  # 新措辞: 逐条回应而非毁灭性反驳
 
     def test_prefill_bear_round1(self) -> None:
         prefill = get_prefill("bear", 1)
@@ -280,10 +284,10 @@ class TestConcessionDetection:
     def test_fewshot_contains_examples(self) -> None:
         bull_shot = get_fewshot("bull")
         assert "PEG" in bull_shot
-        assert "粉碎" in bull_shot
+        assert "数据诚信" in bull_shot  # 新章节标题
 
         bear_shot = get_fewshot("bear")
-        assert "垃圾" in bear_shot
+        assert "缺陷" in bear_shot
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -582,39 +586,39 @@ class TestFMPSource:
             "industry": "Auto",
             "sector": "Consumer Cyclical",
             "price": 245.83,
-            "mktCap": 787000000000,
+            "marketCap": 787000000000,
             "beta": 2.39,
-            "volAvg": 82300000,
             "range": "138.80-488.54",
-            "sharesOutstanding": 3200000000,
             "totalCash": 33400000000,
             "totalDebt": 13427000000,
         }
         key_metrics = {
-            "peRatioTTM": 56.72,
+            "returnOnEquityTTM": 0.168,
+            "returnOnAssetsTTM": 0.074,
+            "evToEBITDATTM": 41.25,
+        }
+        ratios = {
+            "priceToEarningsRatioTTM": 56.72,
             "priceToBookRatioTTM": 8.91,
             "priceToSalesRatioTTM": 7.51,
-            "roeTTM": 0.168,
-            "roaTTM": 0.074,
+            "priceToEarningsGrowthRatioTTM": 2.83,
             "grossProfitMarginTTM": 0.178,
             "netProfitMarginTTM": 0.132,
             "netIncomePerShareTTM": 4.33,
-            "revenueGrowthTTM": 0.025,
-            "netIncomeGrowthTTM": -0.53,
-            "debtToEquityTTM": 24.65,
+            "debtToEquityRatioTTM": 24.65,
             "currentRatioTTM": 1.86,
             "quickRatioTTM": 1.29,
             "freeCashFlowPerShareTTM": 1.085,
-            "evToEbitdaTTM": 41.25,
+            "dividendYieldTTM": None,
+            "dividendPayoutRatioTTM": 0.0,
         }
-        ratios = {
-            "pegRatioTTM": 2.83,
-            "dividendYielTTM": None,
-            "payoutRatioTTM": 0.0,
-            "earningsGrowthTTM": -0.46,
+        growth = {
+            "revenueGrowth": 0.025,
+            "netIncomeGrowth": -0.53,
+            "epsgrowth": -0.46,
         }
 
-        info = _build_info("TSLA", profile, key_metrics, ratios)
+        info = _build_info("TSLA", profile, ratios, key_metrics, growth, {}, {}, {}, {})
 
         # 基本信息
         assert info["shortName"] == "Tesla Inc."
@@ -644,21 +648,21 @@ class TestFMPSource:
         assert info["fiftyTwoWeekLow"] == 138.80
         assert info["fiftyTwoWeekHigh"] == 488.54
 
-        # 自由现金流 (per share × shares = total)
-        assert info["freeCashflow"] == 1.085 * 3200000000
+        # 自由现金流 (per share)
+        assert info["freeCashflowPerShare"] == 1.085
 
         # 市值
         assert info["marketCap"] == 787000000000
         assert info["beta"] == 2.39
 
-        # 股息 (FMP typo: "dividendYielTTM")
+        # 股息
         assert info["dividendYield"] is None
         assert info["payoutRatio"] == 0.0
 
     def test_build_info_handles_missing_data(self) -> None:
         from src.data.fmp_source import _build_info
 
-        info = _build_info("UNKNOWN", {}, {}, {})
+        info = _build_info("UNKNOWN", {}, {}, {}, {}, {}, {}, {}, {})
         assert info["shortName"] == "UNKNOWN"
         assert info["currentPrice"] is None
         assert info["trailingPE"] is None
@@ -908,9 +912,10 @@ class TestToolCallingLogic:
     def test_tool_registry_error_handling(self) -> None:
         from src.utils.calculation_tools import TOOL_REGISTRY
 
-        fn = TOOL_REGISTRY["calculate_peg_ratio"]
-        result = fn(pe_ratio=20.0, earnings_growth_pct=0)
-        assert "error" in result
+        fn = TOOL_REGISTRY["calculate_target_price"]
+        result = fn(eps=6.50, pe_multiple=28.0)
+        # PEG tool removed — system pre-computes PEG, models must NOT calculate it
+        assert result["target_price"] == 182.0
 
     def test_factuality_skip_tool_calculated(self) -> None:
         """验证事实性校验跳过工具计算结果。"""

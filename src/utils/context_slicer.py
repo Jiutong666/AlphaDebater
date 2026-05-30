@@ -26,6 +26,7 @@ from typing import Literal
 
 from src.models.messages import DebateMessage
 from src.models.state import DebateState
+from src.utils.labels import DATA_CITATION_REQUIREMENT, ROUND_LABELS
 
 
 def slice_opponent_last_speech(
@@ -108,32 +109,7 @@ def build_opponent_timeline(
 
 def _round_label(round_num: int) -> str:
     """返回轮次的描述标签。"""
-    labels = {1: "初始立论", 2: "交叉质询", 3: "总结陈词"}
-    return labels.get(round_num, f"第{round_num}轮")
-
-
-# ── 数据引用硬性要求（注入任务指令）───────────────────────────────
-
-_DATA_CITATION_REQUIREMENT = """## 数据引用硬性要求（必须遵守）
-
-你必须在发言中引用**至少3个**来自上方财务数据的具体数值。
-未引用具体数据的论证将被 CIO 降权评分。
-
-注意时间维度标注：数据已按 [LTM/TTM]、[MRQ]、[NTM/Forward] 分类。
-LTM/TTM = 历史已审计数据，MRQ = 最近季度趋势，NTM/Forward = 未来预测。
-不同时间维度的数据不可直接对比或混合计算。
-
-正确引用示例：
-- "当前PE为35.2倍（见上方[LTM/TTM 估值倍数]），但..."
-- "财务数据显示ROE仅16.8%（见上方[LTM/TTM 盈利能力]），远低于行业水平"
-- "分析师预估下一财年EPS为$6.50（见上方[NTM/Forward 预期差]），对应远期PE仅28.6倍"
-- "营收增长率已从35%骤降至2.5%（见上方[MRQ 增长指标]），趋势堪忧"
-
-错误示例（将被扣分）：
-- "估值偏高" — 未引用具体数值
-- "盈利能力不错" — 模糊描述，无数据支撑
-- 将 LTM 数据当作 NTM 数据引用 — 时间维度混淆
-"""
+    return ROUND_LABELS.get(round_num, f"第{round_num}轮")
 
 
 def build_bull_context(state: DebateState) -> str:
@@ -168,7 +144,7 @@ def build_bull_context(state: DebateState) -> str:
     parts.append("\n" + "─" * 50 + "\n")
 
     # ── 3. 数据引用硬性要求 ──
-    parts.append(_DATA_CITATION_REQUIREMENT)
+    parts.append(DATA_CITATION_REQUIREMENT)
     parts.append("\n" + "─" * 50 + "\n")
 
     # ── 4. 本轮任务指令 ──
@@ -230,7 +206,7 @@ def build_bear_context(state: DebateState) -> str:
     parts.append("\n" + "─" * 50 + "\n")
 
     # ── 3. 数据引用硬性要求 ──
-    parts.append(_DATA_CITATION_REQUIREMENT)
+    parts.append(DATA_CITATION_REQUIREMENT)
     parts.append("\n" + "─" * 50 + "\n")
 
     # ── 4. 本轮任务指令 ──
@@ -264,8 +240,8 @@ def build_bear_context(state: DebateState) -> str:
 def build_cio_context(state: DebateState) -> str:
     """为 CIO 裁判构建完整辩论上下文。
 
-    CIO 需要看到全部辩论记录，因为其任务是审判整体辩论质量。
-    但同样不压缩，每条发言用 XML 标签物理隔离。
+    CIO 需要看到完整的财务数据和全部辩论记录，才能验证 agent 引用的数字是否真实存在。
+    财务数据作为 ground truth 注入，辩论记录作为评判对象。
 
     Args:
         state: 辩论完成后的状态。
@@ -274,9 +250,21 @@ def build_cio_context(state: DebateState) -> str:
         组装好的 CIO Prompt 字符串。
     """
     messages: list[DebateMessage] = state.get("messages", [])
+    financial_data: str = state.get("financial_data", "")
 
     parts: list[str] = []
-    parts.append("# 📜 红蓝军辩论完整记录（原文，无压缩）\n")
+    parts.append("# 📜 红蓝军辩论完整记录\n")
+    parts.append(
+        "# ⚠️ 裁判须知：以下财务数据是双方 agent 接收到的唯一数据源。"
+        "请以此为 ground truth 验证双方引用的数字是否真实存在。\n"
+    )
+
+    if financial_data:
+        parts.append("## 📊 财务数据 (Ground Truth)\n")
+        parts.append(financial_data)
+        parts.append("")
+
+    parts.append("# 📜 辩论记录（原文，无压缩）\n")
 
     bull_speeches: list[str] = []
     bear_speeches: list[str] = []

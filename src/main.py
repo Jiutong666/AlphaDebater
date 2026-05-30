@@ -59,6 +59,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="强制使用离线样本数据 (跳过 yfinance)",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="覆盖 LLM 模型 (如 deepseek-chat, gpt-4o, claude-sonnet-4-6)",
+    )
 
     return parser.parse_args(argv)
 
@@ -77,6 +83,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     # 强制使用离线样本数据
     if args.sample:
         settings.data_source = "sample"
+    # 覆盖 LLM 模型
+    if args.model:
+        from src.utils.llm_client import llm_client
+        settings.llm_model = args.model
+        llm_client.model = args.model
+        print(f"\n  🤖 使用模型: {args.model}\n")
 
     ticker: str = args.ticker.strip().upper()
 
